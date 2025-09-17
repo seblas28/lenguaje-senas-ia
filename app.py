@@ -1,6 +1,4 @@
-# ==============================================================================
-# SCRIPT DE ENTRENAMIENTO FINAL PARA DESPLIEGUE EN RENDER (CON CORS CORREGIDO)
-# ==============================================================================
+# lenguaje-senas-ia/app.py
 import json
 import numpy as np
 import pandas as pd
@@ -20,7 +18,7 @@ app = Flask(__name__)
 # --- ¡CONFIGURACIÓN DE CORS PARA PRODUCCIÓN! ---
 # Reemplaza la URL de Vercel con la URL real de tu sitio web desplegado si es diferente.
 # Esto le dice a nuestro servidor que SOLO acepte peticiones desde nuestra app de React.
-origins = "https://kai-senas-app.vercel.app" 
+origins = "https://kai-senas-web.vercel.app" 
 
 CORS(app, resources={
     r"/receive_data": {"origins": origins}
@@ -28,7 +26,6 @@ CORS(app, resources={
 
 def convert_model_to_web_format():
     print("\n--- Iniciando la Conversión del Modelo a Formato Web ---")
-    # Usamos el comando directo que es compatible con nuestro entorno "Dorado"
     command = [
         "tensorflowjs_converter",
         "--input_format=keras",
@@ -43,14 +40,16 @@ def convert_model_to_web_format():
         print("\n=> ¡Conversión completada con éxito!")
     except Exception as e:
         print(f"\n❌ ERROR durante la conversión: {e}")
-        print("Asegúrate de que el entorno virtual (ia_env) esté activado si corres localmente.")
 
 def train_the_model(training_data):
     if not training_data: return
     time.sleep(1)
     print("\n--- Iniciando el Proceso de Entrenamiento del Modelo ---")
     df = pd.json_normalize(training_data)
-    landmarks_data = [ [coord for lm in row['landmarks'] for coord in [lm['x'], lm['y'], lm['z']]] for _, row in df.iterrows() ]
+    landmarks_data = []
+    for index, row in df.iterrows():
+        flat_landmarks = [coord for lm in row['landmarks'] for coord in [lm['x'], lm['y'], lm['z']]]
+        landmarks_data.append(flat_landmarks)
     landmarks_df = pd.DataFrame(landmarks_data)
     data = pd.concat([df['label'], landmarks_df], axis=1)
     X = data.iloc[:, 1:].values
@@ -75,8 +74,6 @@ def train_the_model(training_data):
     model.fit(X_train, y_train, epochs=50, batch_size=16, validation_data=(X_val, y_val), verbose=1)
     model.save('sign_language_model.h5')
     print("\n✅ Modelo entrenado y guardado como 'sign_language_model.h5'.")
-    # NOTA: La conversión automática no es práctica en Render. El paso final
-    # será generar el modelo localmente una última vez y subirlo a la app de React.
     # convert_model_to_web_format() # Comentado para el despliegue en Render
 
 @app.route('/receive_data', methods=['POST'])
@@ -98,9 +95,7 @@ def index():
     return "<h1>Servidor de Entrenamiento KaiSeñas Activo</h1><p>CORS habilitado para el endpoint /receive_data.</p>"
 
 if __name__ == '__main__':
-    # Esta parte es para pruebas locales. Render usará el comando 'gunicorn app:app'.
     print(">>> Servidor de Entrenamiento Local Iniciado <<<")
-    print(">>> Esperando datos en http://localhost:5001/receive_data ...")
     app.run(port=5001, debug=False)
 
 
