@@ -21,7 +21,7 @@ app = Flask(__name__)
 origins = "https://kai-senas-web.vercel.app" 
 
 CORS(app, resources={
-    r"/receive_data": {"origins": origins}
+    r"/*": {"origins": origins}
 })
 
 def convert_model_to_web_format():
@@ -30,8 +30,6 @@ def convert_model_to_web_format():
         "tensorflowjs_converter",
         "--input_format=keras",
         "./sign_language_model.h5",
-        # Esta ruta es para cuando el script se ejecuta localmente.
-        # En Render, esto no funcionará, pero el modelo se guardará en el servidor.
         "../lenguaje-senas/public/tfjs_model"
     ]
     try:
