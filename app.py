@@ -21,7 +21,7 @@ app = Flask(__name__)
 origins = "https://kai-senas-web.vercel.app" 
 
 CORS(app, resources={
-    r"/*": {"origins": origins}
+    r"/*": {"origins": "*"}
 })
 
 def convert_model_to_web_format():
