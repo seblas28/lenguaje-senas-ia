@@ -1,3 +1,6 @@
+# ==============================================================================
+# SCRIPT DE ENTRENAMIENTO FINAL PARA DESPLIEGUE EN RENDER (CON CORS CORREGIDO)
+# ==============================================================================
 import json
 import numpy as np
 import pandas as pd
@@ -5,104 +8,77 @@ import tensorflow as tf
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from flask import Flask, request, jsonify
-from flask_cors import CORS
+from flask_cors import CORS # Importamos CORS
 import threading
+import time
 import subprocess
 import sys
-import time
 
-# --- CONFIGURACIÓN DEL SERVIDOR FLASK ---
+# --- Configuración del Servidor Flask ---
 app = Flask(__name__)
-CORS(app)
+
+# --- ¡CONFIGURACIÓN DE CORS PARA PRODUCCIÓN! ---
+# Reemplaza la URL de Vercel con la URL real de tu sitio web desplegado si es diferente.
+# Esto le dice a nuestro servidor que SOLO acepte peticiones desde nuestra app de React.
+origins = "https://kai-senas-app.vercel.app" 
+
+CORS(app, resources={
+    r"/receive_data": {"origins": origins}
+})
 
 def convert_model_to_web_format():
     print("\n--- Iniciando la Conversión del Modelo a Formato Web ---")
+    # Usamos el comando directo que es compatible con nuestro entorno "Dorado"
     command = [
         "tensorflowjs_converter",
         "--input_format=keras",
         "./sign_language_model.h5",
+        # Esta ruta es para cuando el script se ejecuta localmente.
+        # En Render, esto no funcionará, pero el modelo se guardará en el servidor.
         "../lenguaje-senas/public/tfjs_model"
     ]
     try:
+        # Usamos shell=True en Windows para que encuentre el comando
         subprocess.run(command, check=True, shell=True)
         print("\n=> ¡Conversión completada con éxito!")
-        print("=> El modelo actualizado ya está en la carpeta de tu proyecto de React.")
     except Exception as e:
         print(f"\n❌ ERROR durante la conversión: {e}")
+        print("Asegúrate de que el entorno virtual (ia_env) esté activado si corres localmente.")
 
 def train_the_model(training_data):
-    if not training_data:
-        print("Advertencia: No se recibieron datos de entrenamiento.")
-        return
-
-    # Pequeña pausa para que los mensajes del servidor no se mezclen con los del entrenamiento
-    time.sleep(1) 
+    if not training_data: return
+    time.sleep(1)
     print("\n--- Iniciando el Proceso de Entrenamiento del Modelo ---")
-    
-    # 1. Cargar y Preprocesar los Datos
     df = pd.json_normalize(training_data)
-    
-    # --- ¡CORRECCIÓN CLAVE AQUÍ! Aplanamos los landmarks ---
-    landmarks_data = []
-    for index, row in df.iterrows():
-        # 'row['landmarks']' es una lista de 21 diccionarios ({x, y, z})
-        # La convertimos en una sola lista de 63 números [x1, y1, z1, x2, y2, z2, ...]
-        flat_landmarks = [coord for lm in row['landmarks'] for coord in [lm['x'], lm['y'], lm['z']]]
-        landmarks_data.append(flat_landmarks)
-        
+    landmarks_data = [ [coord for lm in row['landmarks'] for coord in [lm['x'], lm['y'], lm['z']]] for _, row in df.iterrows() ]
     landmarks_df = pd.DataFrame(landmarks_data)
-    
-    # Unimos las etiquetas con los datos aplanados
     data = pd.concat([df['label'], landmarks_df], axis=1)
-
-    # Ahora sí, separamos X e y con el formato correcto
-    X = data.iloc[:, 1:].values  # Todas las columnas excepto la primera (label)
-    y = data.iloc[:, 0].values   # Solo la primera columna (label)
-
-    # Codificar las etiquetas de texto a números (0, 1, 2, ...)
+    X = data.iloc[:, 1:].values
+    y = data.iloc[:, 0].values
     label_encoder = LabelEncoder()
     y_encoded = label_encoder.fit_transform(y)
-    
     classes = label_encoder.classes_
     np.save('classes.npy', classes)
     print(f"✅ Etiquetas encontradas: {classes}")
-
-    # Dividir los datos en conjuntos de entrenamiento y prueba
     X_train, X_val, y_train, y_val = train_test_split(X, y_encoded, test_size=0.2, random_state=42)
-
-    # 2. Construcción del modelo de red neuronal
     model = tf.keras.models.Sequential([
-        tf.keras.layers.InputLayer(input_shape=(X_train.shape[1],)), # La forma de entrada es ahora correcta (63)
+        tf.keras.layers.InputLayer(input_shape=(X_train.shape[1],)),
         tf.keras.layers.Dense(128, activation='relu'),
         tf.keras.layers.Dropout(0.2),
         tf.keras.layers.Dense(64, activation='relu'),
         tf.keras.layers.Dropout(0.2),
         tf.keras.layers.Dense(len(classes), activation='softmax')
     ])
-
-    # 3. Compilación del modelo
-    model.compile(optimizer='adam',
-                  loss='sparse_categorical_crossentropy', # Usamos esta loss porque nuestras etiquetas son números enteros (0, 1, 2...)
-                  metrics=['accuracy'])
-    
+    model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
     model.summary()
-    
-    # 4. Entrenamiento del modelo
     print("\n--- Entrenando... ---")
-    model.fit(X_train, y_train,
-              epochs=50,
-              batch_size=16, # Añadir batch_size es una buena práctica
-              validation_data=(X_val, y_val),
-              verbose=1) # Usamos verbose=1 para ver la barra de progreso
-
-    # 5. Guardar el modelo
+    model.fit(X_train, y_train, epochs=50, batch_size=16, validation_data=(X_val, y_val), verbose=1)
     model.save('sign_language_model.h5')
     print("\n✅ Modelo entrenado y guardado como 'sign_language_model.h5'.")
-    
-    # 6. Conversión automática
-    convert_model_to_web_format()
+    # NOTA: La conversión automática no es práctica en Render. El paso final
+    # será generar el modelo localmente una última vez y subirlo a la app de React.
+    # convert_model_to_web_format() # Comentado para el despliegue en Render
 
-# --- Servidor Flask y Flujo Principal (sin cambios) ---
 @app.route('/receive_data', methods=['POST'])
 def receive_data():
     try:
@@ -116,8 +92,15 @@ def receive_data():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+# Ruta para verificar que el servidor está vivo y para "despertarlo"
+@app.route('/')
+def index():
+    return "<h1>Servidor de Entrenamiento KaiSeñas Activo</h1><p>CORS habilitado para el endpoint /receive_data.</p>"
+
 if __name__ == '__main__':
-    print(">>> Servidor de Entrenamiento Iniciado <<<")
-    print(">>> Esperando datos en http://127.0.0.1:5001/receive_data ...")
+    # Esta parte es para pruebas locales. Render usará el comando 'gunicorn app:app'.
+    print(">>> Servidor de Entrenamiento Local Iniciado <<<")
+    print(">>> Esperando datos en http://localhost:5001/receive_data ...")
     app.run(port=5001, debug=False)
+
 
