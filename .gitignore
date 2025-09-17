@@ -1,0 +1,19 @@
+#Entorno Virtual
+ia_env/
+venv/
+.venv/
+
+#Archivos de caché de Python
+pycache/
+*.pyc
+
+#Modelos y datos generados (se pueden recrear)
+*.h5
+*.npy
+training_data.json
+
+#Archivos de IDE y sistema operativo
+.vscode/
+.idea/
+*.DS_Store
+
