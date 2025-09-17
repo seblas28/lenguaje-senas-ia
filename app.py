@@ -1,6 +1,3 @@
-# ==============================================================================
-# SCRIPT DE ENTRENAMIENTO FINAL Y ROBUSTO PARA RENDER
-# ==============================================================================
 import json
 import numpy as np
 import pandas as pd
@@ -11,34 +8,54 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import threading
 import time
+import subprocess
+import sys
 
 # --- Configuración del Servidor Flask ---
 app = Flask(__name__)
-
-# --- ¡LA CONFIGURACIÓN DE CORS MÁS SIMPLE Y ROBUSTA! ---
-# Esto permite peticiones desde cualquier origen a cualquier ruta.
-# Es perfecto y seguro para una herramienta de presentación como esta.
 CORS(app)
 
+def convert_model_to_web_format():
+    print("\n--- Iniciando la Conversión del Modelo a Formato Web ---")
+    # Este comando es para un entorno local. En Render, la conversión no es necesaria
+    # ya que no podemos acceder al sistema de archivos del frontend directamente.
+    # El modelo debe ser descargado manualmente desde los logs o una ubicación de almacenamiento.
+    print("=> En un entorno de producción como Render, descarga el archivo 'sign_language_model.h5'")
+    print("=> y conviértelo manualmente en tu máquina local.")
+    
 def train_the_model(training_data):
-    if not training_data: return
-    time.sleep(1)
+    if not training_data:
+        print("Advertencia: No se recibieron datos de entrenamiento.")
+        return
+
+    time.sleep(1) 
     print("\n--- Iniciando el Proceso de Entrenamiento del Modelo ---")
     
-    # Preprocesamiento de Datos
+    # 1. Cargar y Preprocesar los Datos
     df = pd.json_normalize(training_data)
-    landmarks_data = [ [coord for lm in row['landmarks'] for coord in [lm['x'], lm['y'], lm['z']]] for _, row in df.iterrows() ]
+    
+    # --- ¡LA CORRECCIÓN CRUCIAL ESTÁ AQUÍ! ---
+    landmarks_data = []
+    for index, row in df.iterrows():
+        # Aplanamos la lista de 21 diccionarios en una sola lista de 63 números
+        flat_landmarks = [coord for lm in row['landmarks'] for coord in [lm['x'], lm['y'], lm['z']]]
+        landmarks_data.append(flat_landmarks)
+        
     landmarks_df = pd.DataFrame(landmarks_data)
     data = pd.concat([df['label'], landmarks_df], axis=1)
+
     X = data.iloc[:, 1:].values
     y = data.iloc[:, 0].values
 
-    # Lógica de Entrenamiento
     label_encoder = LabelEncoder()
     y_encoded = label_encoder.fit_transform(y)
     classes = label_encoder.classes_
+    np.save('classes.npy', classes)
     print(f"✅ Etiquetas encontradas: {classes}")
+
     X_train, X_val, y_train, y_val = train_test_split(X, y_encoded, test_size=0.2, random_state=42)
+
+    # 2. Construcción del modelo
     model = tf.keras.models.Sequential([
         tf.keras.layers.InputLayer(input_shape=(X_train.shape[1],)),
         tf.keras.layers.Dense(128, activation='relu'),
@@ -47,34 +64,38 @@ def train_the_model(training_data):
         tf.keras.layers.Dropout(0.2),
         tf.keras.layers.Dense(len(classes), activation='softmax')
     ])
-    model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+
+    # 3. Compilación del modelo
+    model.compile(optimizer='adam',
+                  loss='sparse_categorical_crossentropy',
+                  metrics=['accuracy'])
     model.summary()
+    
+    # 4. Entrenamiento del modelo
     print("\n--- Entrenando... ---")
     model.fit(X_train, y_train, epochs=50, batch_size=16, validation_data=(X_val, y_val), verbose=1)
+
+    # 5. Guardar el modelo
     model.save('sign_language_model.h5')
     print("\n✅ Modelo entrenado y guardado como 'sign_language_model.h5'.")
-    print("\n>>> El entrenamiento ha finalizado. El servidor sigue activo. <<<")
+    
+    # (La conversión automática se comenta para Render)
+    # convert_model_to_web_format()
 
-
-@app.route('/receive_data', methods=['POST', 'OPTIONS'])
+@app.route('/receive_data', methods=['POST'])
 def receive_data():
-    if request.method == 'OPTIONS':
-        return '', 204
     try:
         data = request.get_json()
-        with open('training_data.json', 'w') as f: json.dump(data, f, indent=2)
-        print("=> Datos recibidos y guardados.")
+        with open('training_data.json', 'w') as f:
+            json.dump(data, f, indent=2)
+        print("=> Datos recibidos y guardados exitosamente.")
         training_thread = threading.Thread(target=train_the_model, args=(data,))
         training_thread.start()
         return jsonify({"status": "success", "message": "Training started."}), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/')
-def index():
-    return "<h1>Servidor de Entrenamiento KaiSeñas Activo (v2)</h1>"
-
-# Esta parte solo se usa para pruebas locales. Render usa el Start Command.
 if __name__ == '__main__':
-    print(">>> Servidor de Entrenamiento Local Iniciado <<<")
+    print(">>> Servidor de Entrenamiento Iniciado <<<")
+    # Render usa gunicorn, pero esta línea permite la ejecución local
     app.run(port=5001, debug=False)
