@@ -14,7 +14,7 @@ pycache/
 *.npy
 
 
-*.json
+training_data_*.json
 
 #Archivos de configuración de IDEs
 .vscode/
