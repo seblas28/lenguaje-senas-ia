@@ -1,3 +1,10 @@
+# ==============================================================================
+# SCRIPT DE ENTRENAMIENTO v4 - CON GUARDADO DE PRECISIÓN
+# ==============================================================================
+# Este script inicia un servidor local, recibe datos por categoría,
+# entrena el modelo, guarda su precisión de validación, y automáticamente
+# convierte y copia los archivos a tu proyecto de React.
+# ==============================================================================
 import json
 import numpy as np
 import pandas as pd
@@ -9,12 +16,32 @@ from flask_cors import CORS
 import threading
 import time
 import subprocess
-import sys
 import os
 
 # --- Configuración del Servidor Flask ---
 app = Flask(__name__)
 CORS(app)
+
+def update_training_summary(category, accuracy):
+    """
+    Lee el resumen de entrenamiento, actualiza la precisión para una categoría
+    y lo vuelve a guardar en la carpeta public del proyecto de React.
+    """
+    summary_path = '../lenguaje-senas/public/training_summary.json'
+    summary = {}
+    if os.path.exists(summary_path):
+        with open(summary_path, 'r') as f:
+            try:
+                summary = json.load(f)
+            except json.JSONDecodeError:
+                print("Advertencia: El archivo de resumen estaba corrupto o vacío. Se creará uno nuevo.")
+    
+    summary[category] = accuracy
+    
+    with open(summary_path, 'w') as f:
+        json.dump(summary, f, indent=2)
+    print(f"✅ Resumen de entrenamiento actualizado para '{category}' con una precisión de {accuracy:.2f}%.")
+
 
 def convert_model_to_web_format(category):
     print(f"\n--- Iniciando Conversión del Modelo [{category}] ---")
@@ -36,7 +63,6 @@ def convert_model_to_web_format(category):
     
     try:
         subprocess.run(command, check=True, shell=True)
-        # Movemos el archivo de etiquetas al directorio público de React
         os.rename(labels_filename, f"../lenguaje-senas/public/{labels_filename}")
         print("\n=> ¡Conversión y copia completada!")
         print(f"=> El modelo para '{category}' ya está en tu proyecto de React.")
@@ -47,16 +73,32 @@ def train_the_model(payload):
     category = payload.get('category')
     training_data = payload.get('data')
 
-    if not training_data or not category:
-        return
-
+    if not training_data or not category: return
+        
     time.sleep(1) 
     print(f"\n--- Iniciando Entrenamiento para [{category}] ---")
+
+    if category == 'matematicas':
+        try:
+            with open('training_data_numeros.json', 'r') as f:
+                numeros_data = json.load(f)
+                print("✅ Datos de 'numeros' encontrados. Fusionando...")
+                training_data.extend(numeros_data)
+        except FileNotFoundError:
+            print("\n⚠️ ADVERTENCIA: No se encontró 'training_data_numeros.json'.")
+            print("   Asegúrate de entrenar la categoría 'numeros' primero.\n")
     
     df = pd.json_normalize(training_data)
     
-    landmarks_data = [ [coord for lm in row['landmarks'] for coord in [lm['x'], lm['y'], lm['z']]] for _, row in df.iterrows() ]
-    landmarks_df = pd.DataFrame(landmarks_data)
+    landmarks_data = []
+    for index, row in df.iterrows():
+        flat_landmarks = [coord for lm in row['landmarks'] for coord in [lm['x'], lm['y'], lm['z']]]
+        landmarks_data.append(flat_landmarks)
+        
+    max_len = 126 
+    padded_landmarks_data = [row + [0] * (max_len - len(row)) for row in landmarks_data]
+    
+    landmarks_df = pd.DataFrame(padded_landmarks_data)
     data = pd.concat([df['label'], landmarks_df], axis=1)
 
     X = data.iloc[:, 1:].values
@@ -74,7 +116,7 @@ def train_the_model(payload):
     X_train, X_val, y_train, y_val = train_test_split(X, y_encoded, test_size=0.2, random_state=42)
 
     model = tf.keras.models.Sequential([
-        tf.keras.layers.InputLayer(input_shape=(X_train.shape[1],)),
+        tf.keras.layers.InputLayer(input_shape=(max_len,)),
         tf.keras.layers.Dense(128, activation='relu'),
         tf.keras.layers.Dropout(0.2),
         tf.keras.layers.Dense(64, activation='relu'),
@@ -86,11 +128,15 @@ def train_the_model(payload):
     model.summary()
     
     print("\n--- Entrenando... ---")
-    model.fit(X_train, y_train, epochs=50, batch_size=16, validation_data=(X_val, y_val), verbose=1)
+    history = model.fit(X_train, y_train, epochs=50, batch_size=16, validation_data=(X_val, y_val), verbose=1)
 
     model_filename = f"{category}_model.h5"
     model.save(model_filename)
     print(f"\n✅ Modelo entrenado y guardado como '{model_filename}'.")
+    
+    # Obtenemos la mejor precisión de validación y la guardamos
+    best_accuracy = max(history.history['val_accuracy']) * 100
+    update_training_summary(category, best_accuracy)
     
     convert_model_to_web_format(category)
 
