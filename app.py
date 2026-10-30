@@ -22,33 +22,33 @@ import os
 app = Flask(__name__)
 CORS(app)
 
+training_sumary_in_memory = {}
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+public_folder_path = os.path.abspath(os.path.join(script_dir, '..', 'lenguaje-senas','public'))
+summary_file_path = os.path.join(public_folder_path, 'training_summary.json')
+
 def update_training_summary(category, accuracy):
-    """
-    Lee el resumen de entrenamiento, actualiza la precisión para una categoría
-    y lo vuelve a guardar en la carpeta public del proyecto de React.
-    """
-    summary_path = '../lenguaje-senas/public/training_summary.json'
-    summary = {}
-    if os.path.exists(summary_path):
-        with open(summary_path, 'r') as f:
-            try:
-                summary = json.load(f)
-            except json.JSONDecodeError:
-                print("Advertencia: El archivo de resumen estaba corrupto o vacío. Se creará uno nuevo.")
+    global training_summary_in_memory
     
-    summary[category] = accuracy
+    # Actualiza el diccionario en memoria
+    training_summary_in_memory[category] = accuracy
+    print(f"✅ Resumen en memoria actualizado para '{category}' con una precisión de {accuracy:.2f}%.")
     
-    with open(summary_path, 'w') as f:
-        json.dump(summary, f, indent=2)
-    print(f"✅ Resumen de entrenamiento actualizado para '{category}' con una precisión de {accuracy:.2f}%.")
+    # Guarda el diccionario actualizado en el archivo JSON
+    with open(summary_file_path, 'w') as f:
+        json.dump(training_summary_in_memory, f, indent=2)
+    print(f"✅ Resumen de entrenamiento guardado en disco en: {summary_file_path}")
 
 
 def convert_model_to_web_format(category):
     print(f"\n--- Iniciando Conversión del Modelo [{category}] ---")
     
     model_filename = f"./{category}_model.h5"
-    labels_filename = f"./labels_{category}.json"
-    output_path = f"../lenguaje-senas/public/tfjs_{category}"
+    output_path = os.path.join(public_folder_path, f"tfjs_{category}")
+    public_labels_path = os.path.join(public_folder_path, f"labels_{category}.json")
+
+    local_labels_filename = f"labels_{category}.json"
 
     if not os.path.exists(model_filename):
         print(f"❌ ERROR: No se encontró el archivo del modelo '{model_filename}'.")
@@ -62,8 +62,10 @@ def convert_model_to_web_format(category):
     ]
     
     try:
+        # Usamos 'shell=True' en Windows para asegurar que el comando se encuentre
         subprocess.run(command, check=True, shell=True)
-        os.rename(labels_filename, f"../lenguaje-senas/public/{labels_filename}")
+        if os.path.exists(local_labels_filename):
+            os.rename(local_labels_filename, public_labels_path)
         print("\n=> ¡Conversión y copia completada!")
         print(f"=> El modelo para '{category}' ya está en tu proyecto de React.")
     except Exception as e:
