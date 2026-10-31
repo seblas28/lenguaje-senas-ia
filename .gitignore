@@ -1,21 +1,21 @@
-#Entornos Virtuales
-/ia_env
-/venv
-/.venv
+# Virtual environments (do not commit or reuse an environment from another PC)
+/ia_env/
+/venv/
+/.venv/
 
-#Archivos de Caché de Python
-pycache/
-*.pyc
-*.pyo
-*.pyd
+# Python cache
+__pycache__/
+*.py[cod]
 
-#Archivos generados por el proyecto
+# Captures and generated models
+/artifacts/
+/datasets/
 *.h5
+*.keras
 *.npy
-
-
 training_data_*.json
+dataset-*.json
+*.kai.json
 
-#Archivos de configuración de IDEs
 .vscode/
 .idea/
