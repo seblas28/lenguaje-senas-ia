@@ -22,6 +22,7 @@ def main(argv=None):
             action.add_argument("--batch-size", type=int, default=16)
             action.add_argument("--patience", type=int, default=8)
             action.add_argument("--threads", type=int, default=2)
+            action.add_argument("--cancel-file", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
         labels, parts, report = prepare(args.data, args.category, args.labels, args.seed)
@@ -30,8 +31,12 @@ def main(argv=None):
             return 0 if report["ready_to_train"] else 2
         if report["problems"]:
             raise DatasetError("El dataset no está listo:\n- " + "\n- ".join(report["problems"]))
-        from .training import train
-        target, result = train(args.category, args.version, labels, parts, report, args.output, args.epochs, args.batch_size, args.patience, args.seed, args.threads)
+        from .training import train, TrainingCancelled
+        try:
+            target, result = train(args.category, args.version, labels, parts, report, args.output, args.epochs, args.batch_size, args.patience, args.seed, args.threads, args.cancel_file)
+        except TrainingCancelled as exc:
+            print(str(exc), file=sys.stderr)
+            return 130
         print(f"\nEntrenamiento completado: {target}")
         print(f"Exactitud de test: {result['metrics']['test']['accuracy']:.2%}. Revisa también la matriz y el rendimiento por etiqueta.")
         print("Sube únicamente model.kai.json desde Administración → Modelos de IA. Aún requiere aprobación y publicación del superadmin.")

@@ -1,8 +1,23 @@
 # Entrenamiento local de Kai Señas
 
-El entrenador funciona por comandos en tu equipo. No inicia Flask, no recibe datos por HTTP y no escribe en el frontend. El resultado es `model.kai.json`, un paquete Kai v1 que ya admite Administración → Modelos de IA.
+El entrenador funciona en tu equipo con una interfaz de escritorio y, opcionalmente, comandos. No inicia Flask, no recibe datos por HTTP y no escribe en el frontend. El resultado es `model.kai.json`, un paquete Kai v1 que ya admite Administración → Modelos de IA.
 
 El flujo es: **capturar → descargar datasets → auditar → entrenar → revisar → subir → aprobar → publicar**. Entrenar no concede permisos ni publica nada.
+
+## Interfaz de escritorio (Windows)
+
+Una vez preparado `.venv` con las dependencias de abajo, abre **`Abrir-entrenador.vbs` con doble clic**. Selecciona el intérprete del entorno del proyecto automáticamente y abre la aplicación sin una consola. No instala dependencias ni cambia configuraciones de Windows.
+
+1. Elige el módulo. La interfaz carga los archivos `dataset-MODULO-*.json` de `datasets` si existen; usa **Añadir archivos** para otras ubicaciones o nombres.
+2. Mantén Etiquetas vacío para el conjunto predeterminado o escribe una cobertura parcial como `B, C, Nulo`.
+3. Pulsa **Auditar capturas** y revisa conteos y problemas. Entrenar se habilita solo al superar esa auditoría. Los archivos se vuelven a comprobar al empezar el entrenamiento.
+4. Elige un nombre de versión nuevo, ajusta épocas/lote/hilos si lo necesitas y pulsa **Entrenar modelo**.
+5. La pestaña Entrenamiento muestra las épocas y el registro. TensorFlow funciona en un proceso separado; la ventana sigue disponible. Los registros completos se conservan en `artifacts/gui-logs`.
+6. **Cancelar** solicita una parada cooperativa: espera un punto seguro, marca la ejecución y libera su bloqueo. Durante la carga inicial de TensorFlow puede tardar; no fuerza la terminación del proceso. Cerrar la ventana durante un trabajo pregunta si quieres esperar su cancelación.
+7. Resultados muestra validación/test y matriz de confusión. **Abrir informe anterior** permite consultar un `training-report.json` existente. **Copiar ruta del paquete** se habilita cuando la carpeta tiene una ejecución completa y `model.kai.json`.
+8. Evalúa la calidad y sube el paquete manualmente desde Administración; la aplicación local no inicia sesión ni aprueba ni publica modelos.
+
+La ventana es redimensionable y requiere al menos 960 × 700 píxeles. Utiliza Tkinter incluido en Python para Windows; no agrega paquetes de interfaz a `requirements.txt`. La consola sigue disponible como alternativa si necesitas un diagnóstico. Si el equipo bloquea VBScript, puedes crear un acceso directo cuyo destino sea `"RUTA-DEL-PROYECTO\.venv\Scripts\pythonw.exe" "RUTA-DEL-PROYECTO\entrenador.pyw"`.
 
 ## 1. Preparar un entorno nuevo
 
@@ -86,7 +101,7 @@ artifacts/vocales/vocales-local-v1/
   status.json             <- complete / failed y huellas de los archivos
 ```
 
-Solo utiliza una ejecución con `status.json` en estado `complete`. Si falla o la cancelas, permanece marcada como `failed` y no debe subirse. El archivo `artifacts/.training.lock` impide entrenamientos simultáneos en el mismo directorio de salida. Si queda tras un cierre abrupto, comprueba primero que no siga entrenando el proceso cuyo PID contiene, y solo entonces retira ese bloqueo. No se borra automáticamente un bloqueo que podría pertenecer a otro proceso.
+Solo utiliza una ejecución con `status.json` en estado `complete`. Si falla, se interrumpe o la cancelas desde la interfaz, permanece marcada como `failed`, `interrupted` o `cancelled` y no debe subirse. El archivo `artifacts/.training.lock` impide entrenamientos simultáneos en el mismo directorio de salida. Si queda tras un cierre abrupto, comprueba primero que no siga entrenando el proceso cuyo PID contiene, y solo entonces retira ese bloqueo. No se borra automáticamente un bloqueo que podría pertenecer a otro proceso.
 
 ## 5. Revisar y enviar a aprobación
 
@@ -105,6 +120,6 @@ El paquete usa la estructura Kai v1, pesos float32 little endian y etiquetas en 
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Las pruebas unitarias verifican validación, deduplicación, agrupación, rechazo de etiquetas/rutas, protección de versiones y el formato binario. La prueba de integración de TensorFlow entrena durante una época con datos **sintéticos** y comprueba los archivos de salida; se omite explícitamente si no tiene Python compatible y TensorFlow. Esa prueba no mide calidad para reconocer señas.
+Las pruebas verifican validación, deduplicación, agrupación, rechazo de etiquetas/rutas, protección de versiones y formato binario. La prueba de integración de TensorFlow entrena con datos **sintéticos** y comprueba los archivos de salida. Las pruebas de los procesos de la interfaz también ejecutan auditoría, entrenamiento y cancelación reales. Para ejecutar la suite completa usa el Python compatible del entorno con TensorFlow instalado; estas pruebas no miden calidad para reconocer señas.
 
 Los datasets antiguos auditados en esta revisión contienen 420/14 muestras totales/únicas en vocales, 60/2 en abecedario, 780/26 en números y 120/4 en matemáticas. Ninguno supera la auditoría nueva: necesitas recopilar capturas nuevas, no repetir o copiar las anteriores.

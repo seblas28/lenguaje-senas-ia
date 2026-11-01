@@ -14,11 +14,15 @@ from .bundle import make_bundle
 from .data import DatasetError
 
 
+class TrainingCancelled(Exception):
+    """Cooperative cancellation requested by the local interface."""
+
+
 def write_json(path, value):
     Path(path).write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
 
 
-def train(category, version, labels, parts, audit, output, epochs=50, batch_size=16, patience=8, seed=42, threads=2):
+def train(category, version, labels, parts, audit, output, epochs=50, batch_size=16, patience=8, seed=42, threads=2, cancel_file=None):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,39}", version or ""):
         raise DatasetError("Versión inválida: usa hasta 40 letras, números, puntos, guiones o guiones bajos.")
     if not (1 <= epochs <= 1000 and 1 <= batch_size <= 1024 and 1 <= patience <= 100 and 1 <= threads <= 16):
@@ -39,15 +43,20 @@ def train(category, version, labels, parts, audit, output, epochs=50, batch_size
         raise DatasetError(f"Existe un entrenamiento en curso o un bloqueo de una ejecución interrumpida: {lock}. Comprueba el proceso antes de retirar ese archivo.") from exc
     run_created = False
     phase = "preparing"
+    def check_cancel():
+        if cancel_file and Path(cancel_file).is_file():
+            raise TrainingCancelled("Cancelación solicitada desde la interfaz local.")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump({"pid": os.getpid(), "version": version, "category": category}, handle)
+        check_cancel()
         os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
         try:
             import numpy as np
             import tensorflow as tf
         except ImportError as exc:
             raise DatasetError("TensorFlow/NumPy no están instalados en este intérprete. Ejecuta python -m pip install -r requirements.txt en el entorno nuevo.") from exc
+        check_cancel()
         tf.config.threading.set_inter_op_parallelism_threads(threads)
         tf.config.threading.set_intra_op_parallelism_threads(threads)
         tf.keras.utils.set_random_seed(seed)
@@ -76,15 +85,22 @@ def train(category, version, labels, parts, audit, output, epochs=50, batch_size
         checkpoint = target / "best.weights.h5"
         phase = "fitting"
         write_json(target / "status.json", {"state": "training", "phase": phase})
+        class CancelCallback(tf.keras.callbacks.Callback):
+            def on_train_batch_begin(self, batch, logs=None):
+                check_cancel()
+            def on_test_batch_begin(self, batch, logs=None):
+                check_cancel()
         history = model.fit(dataset("train", True), validation_data=dataset("validation"), shuffle=False, epochs=epochs, callbacks=[
+            CancelCallback(),
             tf.keras.callbacks.ModelCheckpoint(str(checkpoint), monitor="val_loss", save_best_only=True, save_weights_only=True),
             tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=patience),
             tf.keras.callbacks.TerminateOnNaN(),
         ], verbose=2)
         # Evaluate and export the SAME best checkpoint, not the last epoch.
+        check_cancel()
         phase = "evaluating"
         model.load_weights(str(checkpoint))
-        metrics = {name: {key: float(value) for key, value in model.evaluate(dataset(name), return_dict=True, verbose=0).items()} for name in ("validation", "test")}
+        metrics = {name: {key: float(value) for key, value in model.evaluate(dataset(name), callbacks=[CancelCallback()], return_dict=True, verbose=0).items()} for name in ("validation", "test")}
         probabilities = np.asarray(model(arrays["test"][0], training=False))
         if not np.isfinite(probabilities).all() or any(not np.isfinite(value) for values in metrics.values() for value in values.values()):
             raise DatasetError("El entrenamiento produjo resultados no finitos; no se exportó un paquete válido.")
@@ -93,6 +109,7 @@ def train(category, version, labels, parts, audit, output, epochs=50, batch_size
         for truth, guess in zip(arrays["test"][1], predicted):
             confusion[int(truth)][int(guess)] += 1
         recall = {label: confusion[index][index] / sum(confusion[index]) for index, label in enumerate(labels)}
+        check_cancel()
         phase = "exporting"
         model.save(str(target / "model.keras"))
         weights = [float(value) for weight in model.get_weights() for value in weight.reshape(-1)]
@@ -122,7 +139,7 @@ def train(category, version, labels, parts, audit, output, epochs=50, batch_size
     except BaseException as exc:
         if run_created:
             (target / "traceback.txt").write_text(traceback.format_exc(), encoding="utf-8")
-            write_json(target / "status.json", {"state": "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed", "phase": phase, "error_type": type(exc).__name__, "error": str(exc) or type(exc).__name__, "traceback_file": "traceback.txt", "note": "No subas los archivos de esta ejecución. Usa una versión nueva al reintentar."})
+            write_json(target / "status.json", {"state": "cancelled" if isinstance(exc, TrainingCancelled) else "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed", "phase": phase, "error_type": type(exc).__name__, "error": str(exc) or type(exc).__name__, "traceback_file": "traceback.txt", "note": "No subas los archivos de esta ejecución. Usa una versión nueva al reintentar."})
         raise
     finally:
         lock.unlink(missing_ok=True)
